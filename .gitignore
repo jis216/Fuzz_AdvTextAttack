@@ -1,5 +1,6 @@
 # tensorboard logs
 logs/
+runs/
 
 # dataset
 data/
