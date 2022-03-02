@@ -16,6 +16,8 @@ import numpy as np
 import spacy
 from spacy.tokens import Doc
 from spacy.matcher import Matcher
+from spacy.language import Language
+from spacy.tokens import Token
 import datasets
 from tokenizers import pre_tokenizers
 import torch
@@ -52,6 +54,44 @@ def get_filtered_k_phrases(token_ids, tokenizer, stop_words, k):
   
   return torch.tensor(new_ids)
 
+@Language.factory("merge_phrases")
+def create_entity_merger(nlp, name):
+    return MergePhrases(nlp.vocab)
+
+class MergePhrases:
+  def __init__(self, vocab):
+      #  spacy_tokenizer.add_pipe("merge_noun_chunks")
+      #  spacy_tokenizer.add_pipe("merge_entities")
+      # verb phrase
+      # verb + preposition: 'sit up'
+      # preposition phrase: prep + noun + prep
+
+      pattern1 = [[{'POS': 'VERB'}, {'POS': 'PRON', 'OP': '?'}, 
+                  {'POS': 'ADP', 'OP': '+'}],
+                  [{'POS': 'ADP'}, {'POS': 'NOUN'}, {'POS': 'ADP'}]
+                  ]
+      
+      # instantiate a Matcher instance
+      self.phrase_matcher = Matcher(vocab)
+
+      #matcher.add("Verb ADP ADP phrase", None,  pattern2)
+      self.phrase_matcher.add("Phrase",  pattern1)
+
+      if not Token.has_extension("is_phrase"):
+          Token.set_extension("is_phrase", default=False)
+
+  def __call__(self, doc):
+      matches = self.phrase_matcher(doc)
+      spans = []  # Collect the matched spans here
+      for _, start, end in matches:
+          spans.append(doc[start:end])
+      with doc.retokenize() as retokenizer:
+          for span in spans:
+              retokenizer.merge(span)
+              for token in span:
+                  token._.is_phrase = True  # Mark token as a phrase
+      return doc
+
 class PhraseTokenizer:
   """phrase tokenizer
   PhraseTokenizer is a tokenizer that splits text into words and phrases,
@@ -67,29 +107,7 @@ class PhraseTokenizer:
     spacy_tokenizer = spacy.load("en_core_web_lg")
     #spacy_tokenizer.add_pipe(spacy_tokenizer.create_pipe("merge_noun_chunks"))
     
-    #  spacy_tokenizer.add_pipe("merge_noun_chunks")
-    #  spacy_tokenizer.add_pipe("merge_entities")
-    # verb phrase
-    # verb + preposition: 'sit up'
-    pattern1 = [{'POS': 'VERB'},
-               {'POS': 'PRON', 'OP': '?'},
-               {'POS': 'ADP', 'OP': '+'}]
-
-    # preposition phrase: prep + noun + prep
-    pattern2 = [{'POS': 'ADP'},
-               {'POS': 'NOUN'},
-               {'POS': 'ADP'}]
-
-    # instantiate a Matcher instance
-    phrase_matcher = Matcher(spacy_tokenizer.vocab)
-
-    #matcher.add("Verb ADP ADP phrase", None,  pattern2)
-    phrase_matcher.add("Verb Phrase", None,  pattern1)
-    phrase_matcher.add("Preposition Phrase", None,  pattern2)
-    
-    spacy_tokenizer.add_pipe(spacy_tokenizer.create_pipe("merge_entities"))
-
-    spacy_tokenizer.add_pipe(phrase_matcher)
+    spacy_tokenizer.add_pipe("merge_phrases")
         
     self.spacy_tokenizer = spacy_tokenizer
     self.spacy_tokenizer.tokenizer = self._custom_tokenizer
@@ -107,24 +125,26 @@ class PhraseTokenizer:
     text = entry['text'].replace('\n', '').lower()
 
     phrase_doc = self.spacy_tokenizer(text)
-    with self.spacy_tokenizer.disable_pipes(['Matcher']):
-      entity_doc = self.spacy_tokenizer(text)
-    with self.spacy_tokenizer.disable_pipes(['merge_entities', 'Matcher']):
+    #with self.spacy_tokenizer.disable_pipes(['Matcher']):
+    #   entity_doc = self.spacy_tokenizer(text)
+    with self.spacy_tokenizer.disable_pipes(['merge_phrases']):
       word_doc = self.spacy_tokenizer(text)
 
     entry['words'] = [token.text for token in word_doc]
     entry['word_offsets'] = [(token.idx, token.idx+len(token)) for token in word_doc]
-    entry['phrases'] = [token.text for token in entity_doc]
-    entry['phrase_offsets'] = [(token.idx, token.idx+len(token)) for token in entity_doc]
+    entry['phrases'] = [token.text for token in phrase_doc]
+    entry['phrase_offsets'] = [(token.idx, token.idx+len(token)) for token in phrase_doc]
     
     i, j = 0, 0
     entry['n_words_in_phrases'] = [0] * len(entry['phrases'])
-    while i < len(word_doc) and j < len(entity_doc):
+    while i < len(word_doc) and j < len(phrase_doc):
       entry['n_words_in_phrases'][j] += 1
-      if word_doc[i].idx+len(word_doc[i]) == entity_doc[j].idx+len(entity_doc[j]):
+      if word_doc[i].idx+len(word_doc[i]) == phrase_doc[j].idx+len(phrase_doc[j]):
         j += 1
       i += 1 
 
+    '''
+    #entity merging stuff
     if len(phrase_doc) == 0:
       return entry
     
@@ -146,6 +166,9 @@ class PhraseTokenizer:
     entry['phrases'] = output_phrases
     entry['phrase_offsets'] = output_offsets
     entry['n_words_in_phrases'] = output_n_words
+
+    '''
+    
     
     return entry
 
