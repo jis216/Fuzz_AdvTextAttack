@@ -1,0 +1,1 @@
+textattack attack --disable-stdout --model distilbert-base-uncased-imdb --model-batch-size 32 --num-workers-per-device 1 --recipe bert-attack --num-examples -1 --checkpoint-interval 100 --checkpoint-dir runs/baselines/checkpoints/bert-attack/ --log-to-csv runs/baselines/bert-attack.csv

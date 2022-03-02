@@ -1,0 +1,1 @@
+textattack attack --disable-stdout --model distilbert-base-uncased-imdb --model-batch-size 32 --num-workers-per-device 1 --recipe textfooler --num-examples -1 --log-to-csv runs/baselines/textfooler.csv
