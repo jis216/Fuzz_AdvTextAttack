@@ -168,8 +168,9 @@ def get_phrase_substitutes(input_ids, attention_mask, mask_token_index, stop_wor
   for p in range(1, word_positions):
     new_inputs = input_ids.repeat(len(candidate_ids), 1)
     new_inputs[:, mask_token_index[:p]] = candidate_ids
+    new_attention_mask = attention_mask.repeat(len(candidate_ids), 1)
     
-    masked_logits = mlm_model(new_inputs, attention_mask).logits
+    masked_logits = mlm_model(new_inputs, new_attention_mask).logits
     masked_logits = torch.index_select(masked_logits, 1, mask_token_index[p])
     query_num += len(new_inputs)
     

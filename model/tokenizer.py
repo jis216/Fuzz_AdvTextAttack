@@ -86,7 +86,9 @@ class MergePhrases:
       for _, start, end in matches:
           spans.append(doc[start:end])
       with doc.retokenize() as retokenizer:
-          for span in spans:
+          for span in spacy.util.filter_spans(spans):
+              #if len(span) > 3:
+              #  print(len(span), doc)
               retokenizer.merge(span)
               for token in span:
                   token._.is_phrase = True  # Mark token as a phrase
@@ -103,7 +105,7 @@ class PhraseTokenizer:
   def __init__(self):
     self._pre_tokenizer = pre_tokenizers.BertPreTokenizer()
 
-    spacy.prefer_gpu()
+    #spacy.prefer_gpu()
     spacy_tokenizer = spacy.load("en_core_web_lg")
     #spacy_tokenizer.add_pipe(spacy_tokenizer.create_pipe("merge_noun_chunks"))
     
