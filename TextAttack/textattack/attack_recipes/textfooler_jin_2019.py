@@ -15,6 +15,7 @@ from textattack.constraints.pre_transformation import (
 )
 from textattack.constraints.semantics import WordEmbeddingDistance
 from textattack.constraints.semantics.sentence_encoders import UniversalSentenceEncoder
+from textattack.constraints.semantics.sentence_encoders import BERT
 from textattack.goal_functions import UntargetedClassification
 from textattack.search_methods import GreedyWordSwapWIR
 from textattack.transformations import WordSwapEmbedding
@@ -36,7 +37,7 @@ class TextFoolerJin2019(AttackRecipe):
         # Swap words with their 50 closest embedding nearest-neighbors.
         # Embedding: Counter-fitted PARAGRAM-SL999 vectors.
         #
-        transformation = WordSwapEmbedding(max_candidates=8)
+        transformation = WordSwapEmbedding(max_candidates=50)
         #
         # Don't modify the same word twice or the stopwords defined
         # in the TextFooler public implementation.
@@ -59,7 +60,7 @@ class TextFoolerJin2019(AttackRecipe):
         # (The paper claims 0.7, but analysis of the released code and some empirical
         # results show that it's 0.5.)
         #
-        constraints.append(WordEmbeddingDistance(min_cos_sim=0.5))
+        constraints.append(WordEmbeddingDistance(min_cos_sim=0.8)) # original 0.5
         #
         # Only replace words with the same part of speech (or nouns with verbs)
         #
@@ -71,6 +72,7 @@ class TextFoolerJin2019(AttackRecipe):
         # embeddings by pi. So if the original threshold was that 1 - sim >= 0.5, the
         # new threshold is 1 - (0.5) / pi = 0.840845057
         #
+        '''
         use_constraint = UniversalSentenceEncoder(
             threshold=0.840845057,
             metric="angular",
@@ -79,6 +81,12 @@ class TextFoolerJin2019(AttackRecipe):
             skip_text_shorter_than_window=True,
         )
         constraints.append(use_constraint)
+        '''
+        sent_encoder = BERT(
+            model_name="stsb-distilbert-base", threshold=0.9, metric="cosine"
+        )
+        constraints.append(sent_encoder)
+
         #
         # Goal is untargeted classification
         #

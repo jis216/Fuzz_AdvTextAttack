@@ -17,6 +17,7 @@ from textattack.constraints.pre_transformation import (
     StopwordModification,
 )
 from textattack.constraints.semantics.sentence_encoders import UniversalSentenceEncoder
+from textattack.constraints.semantics.sentence_encoders import BERT
 from textattack.goal_functions import UntargetedClassification
 from textattack.search_methods import GreedyWordSwapWIR
 from textattack.transformations import WordSwapMaskedLM
@@ -38,7 +39,7 @@ class BERTAttackLi2020(AttackRecipe):
     def build(model_wrapper):
         # [from correspondence with the author]
         # Candidate size K is set to 48 for all data-sets.
-        transformation = WordSwapMaskedLM(method="bert-attack", max_candidates=8)
+        transformation = WordSwapMaskedLM(method="bert-attack", max_candidates=16) # original 48
         #
         # Don't modify the same word twice or stopwords.
         #
@@ -70,6 +71,7 @@ class BERTAttackLi2020(AttackRecipe):
         # Since the threshold in the real world can't be determined from the training
         # data, the TextAttack implementation uses a fixed threshold - determined to
         # be 0.2 to be most fair.
+        '''
         use_constraint = UniversalSentenceEncoder(
             threshold=0.2,
             metric="cosine",
@@ -77,6 +79,13 @@ class BERTAttackLi2020(AttackRecipe):
             window_size=None,
         )
         constraints.append(use_constraint)
+        '''
+        sent_encoder = BERT(
+            model_name="stsb-distilbert-base", threshold=0.9, metric="cosine"
+        )
+        constraints.append(sent_encoder)
+
+        
         #
         # Goal is untargeted classification.
         #

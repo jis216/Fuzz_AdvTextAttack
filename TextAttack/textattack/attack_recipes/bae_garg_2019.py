@@ -96,7 +96,7 @@ class BAEGarg2019(AttackRecipe):
         # = 1 - (0.2 / pi) = 0.936338023.
         use_constraint = UniversalSentenceEncoder(
             threshold=0.936338023,
-            metric="cosine",
+            metric="angular",
             compare_against_original=True,
             window_size=15,
             skip_text_shorter_than_window=True,

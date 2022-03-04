@@ -1,15 +1,3 @@
-#! /usr/bin/env python
-# -*- coding: utf-8 -*-
-# vim:fenc=utf-8
-#
-# Copyright © 2020 Hengda Shi <hengda.shi@cs.ucla.edu>
-#
-# Distributed under terms of the MIT license.
-
-"""
-main routine
-"""
-
 from pathlib import Path
 from pprint import pprint
 import os
@@ -37,6 +25,23 @@ from common.data_utils import get_dataset, download_model
 from model.tokenizer import PhraseTokenizer
 from model.attacker import Attacker
 from model.evaluate import evaluate
+
+from textattack.models.wrappers import HuggingFaceModelWrapper
+from textattack.goal_functions import UntargetedClassification
+from textattack.datasets import HuggingFaceDataset
+
+from textattack import Attack
+from textattack import AttackArgs
+from textattack.constraints.overlap import MaxWordsPerturbed
+from textattack.constraints.pre_transformation import (
+    RepeatModification,
+    StopwordModification,
+)
+from textattack.constraints.semantics.sentence_encoders import UniversalSentenceEncoder
+from textattack.constraints.semantics.sentence_encoders import BERT
+from textattack.goal_functions import UntargetedClassification
+from textattack.search_methods import GreedyWordSwapWIR
+from textattack.transformations import WordSwapMaskedLM
 
 import time
 import json
@@ -68,36 +73,23 @@ if __name__ == "__main__":
   with tf.device("/cpu:0"):
     encoder_use = hub.load(url)
   
-
-  #cwd = Path(__file__).parent.absolute()
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   if device == "cuda":
     torch.cuda.empty_cache()
 
   print(f"Running on {device}")
 
-  #print('Load saved model')
-  #download_model(cwd)
-
+  # Import the dataset
   print('Load dataset')
-  # retrieve dataset
-  #train_ds, val_ds, test_ds = get_dataset(split_rate=0.8)
-  #train_ds = datasets.Dataset.from_dict(train_ds[258:2258])
-  #val_ds = datasets.Dataset.from_dict(val_ds[:20])
-  #test_ds = datasets.Dataset.from_dict(test_ds[:20])
-  
-  ds_name = "imdb" # "yelp_polarity"
-  _, test_ds = get_dataset(ds_name, split_rate=1.0)
-  test_ds = datasets.Dataset.from_dict(test_ds[:1000])
+
+  ds_name = "imdb"
+  dataset = HuggingFaceDataset("ag_news", None, "test")
 
   #embeddings_cf = np.load('./data/sim_mat/embeddings_cf.npy')
   #word_ids = np.load('./data/sim_mat/word_id.npy',allow_pickle='TRUE').item()
     
   #cwd/"saved_model"/"imdb_bert_base_uncased_finetuned_normal"
   if ds_name == "imdb":
-    #target_model_name = "imdb_bert_base_uncased_finetuned_training"
-    #target_model_path = cwd/"data"/"imdb"/"saved_model"/target_model_name
-    #target_model_name = "bert-base-uncased-imdb"
     target_model_name = "bert-base-uncased-imdb"
   elif ds_name == "yelp_polarity":
     target_model_name = "bert-base-uncased-yelp-polarity"
@@ -121,21 +113,13 @@ if __name__ == "__main__":
   tokenizer = AutoTokenizer.from_pretrained(target_model_path)
   target_model = AutoModelForSequenceClassification.from_pretrained(target_model_path).to(device)
 
+  target_model_wrapper = HuggingFaceModelWrapper(target_model, tokenizer)
+
+  # Create the goal function using the model
+  goal_function = UntargetedClassification(target_model_wrapper)
+
   phrase_tokenizer = PhraseTokenizer()
   mlm_model = AutoModelForMaskedLM.from_pretrained("bert-base-uncased").to(device)
-
-  if use_cuda:
-    t = torch.cuda.get_device_properties(0).total_memory *9.31323e-10 #GiB
-    r = torch.cuda.memory_reserved(0) *9.31323e-10 #GiB
-    a = torch.cuda.memory_allocated(0) *9.31323e-10  #GiB
-    f = (r-a) * 1024 # free inside cache [MiB]
-    
-    print('__CUDNN VERSION:', torch.backends.cudnn.version())
-    print('__Number CUDA Devices:', torch.cuda.device_count())
-    print('__CUDA Device Name:',torch.cuda.get_device_name(0))
-    print(f'Allocated/Reserved/Total Memory [GiB]: {a}/{r}/{t}')
-    print(f'Free Memory [MiB]: {f}')
-  
 
   # turn models to eval model since only inference is needed
   target_model.eval()
@@ -144,21 +128,54 @@ if __name__ == "__main__":
   # tokenize the dataset to include words and phrases
   test_ds = test_ds.map(phrase_tokenizer.tokenize)
 
-  if use_cuda:
-    t = torch.cuda.get_device_properties(0).total_memory *9.31323e-10 #GiB
-    r = torch.cuda.memory_reserved(0) *9.31323e-10 #GiB
-    a = torch.cuda.memory_allocated(0) *9.31323e-10  #GiB
-    f = (r-a) * 1024 # free inside cache [MiB]
-    
-    print('__CUDNN VERSION:', torch.backends.cudnn.version())
-    print('__Number CUDA Devices:', torch.cuda.device_count())
-    print('__CUDA Device Name:',torch.cuda.get_device_name(0))
-    print(f'Allocated/Reserved/Total Memory [GiB]: {a}/{r}/{t}')
-    print(f'Free Memory [MiB]: {f}')
-
   # create the attacker
   params = {'k':15, 'beam_width':8, 'conf_thres':3.0, 'sent_semantic_thres':0.7, 'change_threshold':0.2}
   attacker = Attacker(phrase_tokenizer, tokenizer, target_model, mlm_model, encoder_use,  device, **params) #embeddings_cf,
+
+  # Candidate size K is set to 48 for bert-attack
+  transformation = WordSwapMaskedLM(method="bert-attack", max_candidates=16) # original 48
+  
+  # Don't modify the same word twice or stopwords.
+  constraints = [RepeatModification(), StopwordModification()]
+  constraints.append(MaxWordsPerturbed(max_percent=0.2))
+
+  '''
+  use_constraint = UniversalSentenceEncoder(
+      threshold=0.7,
+      metric="cosine",
+      compare_against_original=True,
+      window_size=None,
+  )
+  constraints.append(use_constraint)
+  '''
+  sent_encoder = BERT(
+      model_name="stsb-distilbert-base", threshold=0.9, metric="cosine"
+  )
+  constraints.append(sent_encoder)
+
+  
+  #
+  # Goal is untargeted classification.
+  #
+  goal_function = UntargetedClassification(model_wrapper)
+  #
+  # "We first select the words in the sequence which have a high significance
+  # influence on the final output logit. Let S = [w0, ··· , wi ··· ] denote
+  # the input sentence, and oy(S) denote the logit output by the target model
+  # for correct label y, the importance score Iwi is defined as
+  # Iwi = oy(S) − oy(S\wi), where S\wi = [w0, ··· , wi−1, [MASK], wi+1, ···]
+  # is the sentence after replacing wi with [MASK]. Then we rank all the words
+  # according to the ranking score Iwi in descending order to create word list
+  # L."
+  search_method = GreedyWordSwapWIR(wir_method="unk")
+
+  attack = Attack(goal_function, constraints, transformation, search_method)
+
+  attack_args = AttackArgs(num_examples=10)
+
+  attacker = Attacker(attack, dataset, attack_args)
+
+  attack_results = attacker.attack_dataset()
 
   output_entries = []
   adv_examples = []
