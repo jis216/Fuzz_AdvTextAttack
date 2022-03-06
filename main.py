@@ -1,14 +1,7 @@
-from pathlib import Path
-from pprint import pprint
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
 import torch
-mixed_precision = True
-try:
-  from apex import amp
-except ImportError:
-  mixed_precision = False
 import datasets
 from datasets import concatenate_datasets
 from tqdm import tqdm
@@ -17,6 +10,7 @@ from transformers import (
   AutoModelForSequenceClassification,
   AutoModelForMaskedLM,
 )
+from sentence_transformers import SentenceTransformer
 import tensorflow as tf
 import tensorflow_hub as hub
 import numpy as np
@@ -33,6 +27,7 @@ import json
 if __name__ == "__main__":
   start_time = time.time()
 
+  '''
   # 0. init setup
   tf.get_logger().setLevel("ERROR")
 
@@ -54,8 +49,8 @@ if __name__ == "__main__":
   url = "https://tfhub.dev/google/universal-sentence-encoder/4"
 
   with tf.device("/cpu:0"):
-    encoder_use = hub.load(url)
-  
+    sent_encoder = hub.load(url)
+  '''
 
   #cwd = Path(__file__).parent.absolute()
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -74,9 +69,13 @@ if __name__ == "__main__":
   #val_ds = datasets.Dataset.from_dict(val_ds[:20])
   #test_ds = datasets.Dataset.from_dict(test_ds[:20])
   
-  ds_name = "imdb" # "yelp_polarity"
+  ds_name = "imdb" # "yelp_polarity", imdb
   _, test_ds = get_dataset(ds_name, split_rate=1.0)
   test_ds = datasets.Dataset.from_dict(test_ds[:1000])
+  label_map = None
+
+  # test_ds = datasets.load_dataset("glue", "mnli")["validation_matched"]
+  # label_map = {0: 1, 1: 2, 2: 0}
 
   #embeddings_cf = np.load('./data/sim_mat/embeddings_cf.npy')
   #word_ids = np.load('./data/sim_mat/word_id.npy',allow_pickle='TRUE').item()
@@ -87,6 +86,8 @@ if __name__ == "__main__":
     #target_model_path = cwd/"data"/"imdb"/"saved_model"/target_model_name
     #target_model_name = "bert-base-uncased-imdb"
     target_model_name = "bert-base-uncased-imdb"
+  elif ds_name == "mnli":
+    target_model_name = "bert-base-uncased-MNLI"
   elif ds_name == "yelp_polarity":
     target_model_name = "bert-base-uncased-yelp-polarity"
   target_model_path = f"textattack/{target_model_name}"
@@ -106,6 +107,9 @@ if __name__ == "__main__":
     
 
   print('Obtain model and tokenizer')
+  sent_encoder = SentenceTransformer('sentence-transformers/bert-base-nli-stsb-mean-tokens')
+  sent_encoder.eval()
+
   tokenizer = AutoTokenizer.from_pretrained(target_model_path)
   target_model = AutoModelForSequenceClassification.from_pretrained(target_model_path).to(device)
 
@@ -130,6 +134,7 @@ if __name__ == "__main__":
   mlm_model.eval()
 
   # tokenize the dataset to include words and phrases
+  # test_ds = test_ds.map(lambda t: phrase_tokenizer.tokenize(t, label_map=label_map))
   test_ds = test_ds.map(phrase_tokenizer.tokenize)
 
   if use_cuda:
@@ -146,7 +151,7 @@ if __name__ == "__main__":
 
   # create the attacker
   params = {'k':15, 'beam_width':8, 'conf_thres':3.0, 'sent_semantic_thres':0.7, 'change_threshold':0.2}
-  attacker = Attacker(phrase_tokenizer, tokenizer, target_model, mlm_model, encoder_use,  device, **params) #embeddings_cf,
+  attacker = Attacker(phrase_tokenizer, tokenizer, target_model, mlm_model, sent_encoder,  device, **params) #embeddings_cf,
 
   output_entries = []
   adv_examples = []
@@ -182,8 +187,9 @@ if __name__ == "__main__":
       if not entry['pred_success']:
         pred_failures += 1
       else:
-        seq_embeddings = encoder_use([entry['final_adv'], entry['text']])
-        semantic_sim =  np.dot(*seq_embeddings)
+        seq_embeddings = sent_encoder.encode([entry['final_adv'], entry['text']])
+        semantic_sim = np.dot(seq_embeddings[0], seq_embeddings[1]) / \
+            (np.linalg.norm(seq_embeddings[0]) * np.linalg.norm(seq_embeddings[1]))
         new_entry['semantic_sim'] = float(semantic_sim)
         adv_examples.append({k: entry[k] for k in {'label', 'text'}})
 

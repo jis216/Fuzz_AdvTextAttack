@@ -9,6 +9,7 @@ from textattack.constraints.pre_transformation import (
     StopwordModification,
 )
 from textattack.constraints.semantics.sentence_encoders import UniversalSentenceEncoder
+from textattack.constraints.semantics.sentence_encoders import BERT
 from textattack.goal_functions import UntargetedClassification
 from textattack.search_methods import GreedyWordSwapWIR
 from textattack.transformations import WordSwapMaskedLM
@@ -94,6 +95,7 @@ class BAEGarg2019(AttackRecipe):
         # adjust the threshold to account for the missing / pi in the cosine
         # similarity comparison. So the final threshold is 1 - (1 - 0.8) / pi
         # = 1 - (0.2 / pi) = 0.936338023.
+        '''
         use_constraint = UniversalSentenceEncoder(
             threshold=0.936338023,
             metric="angular",
@@ -102,6 +104,13 @@ class BAEGarg2019(AttackRecipe):
             skip_text_shorter_than_window=True,
         )
         constraints.append(use_constraint)
+        '''
+
+        sent_encoder = BERT(
+            model_name="stsb-distilbert-base", threshold=0.9, metric="cosine"
+        )
+        constraints.append(sent_encoder)
+        
         #
         # Goal is untargeted classification.
         #

@@ -34,7 +34,7 @@ class Attacker:
                sent_semantic_thres=0.6,
                change_threshold=0.4):
     self.pre_tok          = pre_tok
-    self.stop_words       = self.pre_tok.spacy_tokenizer.Defaults.stop_words
+    self.stop_words       = self.pre_tok.spacy_processor.Defaults.stop_words
     self.tokenizer        = tokenizer
     self.target_model     = target_model
     self.mlm_model        = mlm_model
@@ -203,8 +203,11 @@ class Attacker:
           # semantic check -> if the phrase changes too much
           #if len(candidates) > 1:
           #seq_embeddings = self.sent_encoder([candidate, phrases[i]])
-          seq_embeddings = self.sent_encoder([perturbed_text, entry['text']])
-          semantic_sim =  np.dot(*seq_embeddings)
+
+          seq_embeddings = self.sent_encoder.encode([perturbed_text, entry['text']])
+          #seq_embeddings = self.sent_encoder([perturbed_text, entry['text']])
+          semantic_sim = np.dot(seq_embeddings[0], seq_embeddings[1]) / \
+            (np.linalg.norm(seq_embeddings[0]) * np.linalg.norm(seq_embeddings[1]))
 
           if semantic_sim < self.sent_semantic_thres:
             continue

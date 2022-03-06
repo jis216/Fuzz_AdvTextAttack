@@ -14,6 +14,7 @@ from textattack.constraints.pre_transformation import (
     StopwordModification,
 )
 from textattack.constraints.semantics.sentence_encoders import UniversalSentenceEncoder
+from textattack.constraints.semantics.sentence_encoders import BERT
 from textattack.goal_functions import UntargetedClassification
 from textattack.search_methods import GreedySearch
 from textattack.transformations import (
@@ -87,6 +88,7 @@ class CLARE2020(AttackRecipe):
         # "A  common  choice  of sim(·,·) is to encode sentences using neural networks,
         # and calculate their cosine similarity in the embedding space (Jin et al., 2020)."
         # The original implementation uses similarity of 0.7.
+        '''
         use_constraint = UniversalSentenceEncoder(
             threshold=0.7,
             metric="cosine",
@@ -95,6 +97,12 @@ class CLARE2020(AttackRecipe):
             skip_text_shorter_than_window=True,
         )
         constraints.append(use_constraint)
+        '''
+
+        sent_encoder = BERT(
+            model_name="stsb-distilbert-base", threshold=0.9, metric="cosine"
+        )
+        constraints.append(sent_encoder)
 
         # Goal is untargeted classification.
         # "The score is then the negative probability of predicting the gold label from f, using [x_{adv}] as the input"
