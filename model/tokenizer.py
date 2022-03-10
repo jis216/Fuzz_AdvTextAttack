@@ -58,7 +58,7 @@ class MergePhrases:
     # instantiate a Matcher instance
     pattern = [[{'POS': 'VERB'}, {'POS': 'PRON', 'OP': '?'}, {'POS': 'ADP', 'OP': '+'}],
             [{'POS': 'ADV'}, {'POS': 'ADV'}, {'POS': 'SCONJ'}],
-            [{'POS': 'ADP'}, {'POS': 'ADV'}, {'POS': 'ADV', 'OP': '+'}]]
+            [{'POS': 'ADP'}, {'POS': 'ADV', 'OP': '+'}]]
     self.tag_matcher = Matcher(vocab)
 
     # matcher.add("Verb ADP ADP phrase", None,  pattern2)
@@ -117,55 +117,15 @@ class MergePhrases:
           
       last_sent_match_end = cur_sent_match_end
 
-      # prevent overlaps
-      '''
-      i = 0
-      while i < len(tag_matches)-1:
-          # print(i, len(spans), range(len(spans) - 1))
-          if tree_str.find(tag_matches[i][-1].text) >= tree_str.find(tag_matches[i + 1][0].text):
-              print(tag_matches[i][-1].text, tag_matches[i + 1][0].text)
-              second_label = nodes[nodes.index(tag_matches[i + 1][0].text)-1]
-
-              if second_label == '(RP' or second_label == 'IN':
-                  tag_matches.remove(tag_matches[i+1])
-              elif tag_matches[i].text in tag_matches[i+1].text:
-                  tag_matches.remove(tag_matches[i])
-              elif tag_matches[i+1].text in tag_matches[i].text:
-                  tag_matches.remove(tag_matches[i+1])
-              else:
-                  tag_matches.remove(tag_matches[i+1])
-              continue
-          i += 1
-
-      print(spans)
-      '''
     return phrase_matches
-  
-  def check_in_span(self, word_idx, span_chunks):
-    for span in span_chunks:
-        if word_idx >= span[0] and word_idx < span[1]:
-            return True
-
-    '''
-    words = sentence[:-1].split()
-    print(words)
-    chunks = []
-    word_idx = 0
-    for word in words:
-        if self.check_in_span(word_idx, span_chunks): 
-            word_idx += (len(word) + 1)
-            continue
-        else: 
-            chunks.append((word_idx, word_idx+len(word)))
-            word_idx += (len(word)+1)
-        
-    phrase_offset_list = sorted(chunks + span_chunks) 
-    '''
-    return span_chunks
     
   def __call__(self, doc):
     phrase_matches = self.detect_phrase_spans(doc)
-    spans = []  # Collect the matched spans here
+    spans = []  # Collect the phrase and entity spans here
+
+    for ent in doc.ents:
+      spans.append(doc[ent.start:ent.end])
+    
     for _, start, end in phrase_matches:
       spans.append(doc[start:end])
 
@@ -186,8 +146,9 @@ class PhraseTokenizer:
   The pre-tokenizer in the spaCy package is very basic and we substitute it with
   the pre-tokenizer being used in BERT model.
   """
-  def __init__(self):
+  def __init__(self, use_phrase=True):
     self._pre_tokenizer = pre_tokenizers.BertPreTokenizer()
+    self.use_phrase = use_phrase
 
     #spacy.prefer_gpu()
     spacy_processor = spacy.load("en_core_web_lg")
@@ -210,50 +171,29 @@ class PhraseTokenizer:
     """
     text = entry['text'].replace('\n', '').lower()
 
-    phrase_doc = self.spacy_processor(text)
-    #with self.spacy_tokenizer.disable_pipes(['Matcher']):
-    #   entity_doc = self.spacy_tokenizer(text)
     with self.spacy_processor.disable_pipes(['merge_phrases']):
       word_doc = self.spacy_processor(text)
 
     entry['words'] = [token.text for token in word_doc]
     entry['word_offsets'] = [(token.idx, token.idx+len(token)) for token in word_doc]
-    entry['phrases'] = [token.text for token in phrase_doc]
-    entry['phrase_offsets'] = [(token.idx, token.idx+len(token)) for token in phrase_doc]
-    
-    i, j = 0, 0
-    entry['n_words_in_phrases'] = [0] * len(entry['phrases'])
-    while i < len(word_doc) and j < len(phrase_doc):
-      entry['n_words_in_phrases'][j] += 1
-      if word_doc[i].idx+len(word_doc[i]) == phrase_doc[j].idx+len(phrase_doc[j]):
-        j += 1
-      i += 1 
+    entry['phrases'] = entry['words']
+    entry['phrase_offsets'] = entry['word_offsets'] 
+    entry['n_words_in_phrases'] = [1] * len(entry['phrases'])
 
-    '''
-    #entity merging stuff
-    if len(phrase_doc) == 0:
-      return entry
-    
-    output_phrases = []
-    output_offsets = []
-    output_n_words = []
-    last_i = 0
-    for _, s, e in phrase_doc:
-      output_phrases += entry['phrases'][last_i:s] + [' '.join(entry['phrases'][s:e])]
-      output_offsets += entry['phrase_offsets'][last_i:s] + [(entry['phrase_offsets'][s][0], entry['phrase_offsets'][e-1][1])]
-      output_n_words += entry['n_words_in_phrases'][last_i:s] + [sum(entry['n_words_in_phrases'][s:e])]
-      last_i = e
-    
-    end_i = phrase_doc[-1][2]
-    output_phrases += entry['phrases'][end_i:]
-    output_offsets += entry['phrase_offsets'][end_i:]
-    output_n_words += entry['n_words_in_phrases'][end_i:]
-        
-    entry['phrases'] = output_phrases
-    entry['phrase_offsets'] = output_offsets
-    entry['n_words_in_phrases'] = output_n_words
+    if self.use_phrase:
+      phrase_doc = self.spacy_processor(text)
 
-    '''
+      entry['phrases'] = [token.text for token in phrase_doc]
+      entry['phrase_offsets'] = [(token.idx, token.idx+len(token)) for token in phrase_doc]
+    
+      i, j = 0, 0
+      entry['n_words_in_phrases'] = [0] * len(entry['phrases'])
+      while i < len(word_doc) and j < len(phrase_doc):
+        entry['n_words_in_phrases'][j] += 1
+        if word_doc[i].idx+len(word_doc[i]) == phrase_doc[j].idx+len(phrase_doc[j]):
+          j += 1
+        i += 1 
+
     return entry
 
 

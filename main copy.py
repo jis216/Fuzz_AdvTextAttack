@@ -4,7 +4,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 import torch
 import datasets
 from datasets import concatenate_datasets
-from tqdm import tqdm
+
 from transformers import (
   AutoTokenizer,
   AutoModelForSequenceClassification,
@@ -14,6 +14,7 @@ from sentence_transformers import SentenceTransformer
 import tensorflow as tf
 import tensorflow_hub as hub
 import numpy as np
+from tqdm import tqdm
 
 from common.data_utils import get_dataset, download_model
 from model.tokenizer import PhraseTokenizer
@@ -30,6 +31,7 @@ if __name__ == "__main__":
   '''
   # 0. init setup
   tf.get_logger().setLevel("ERROR")
+
   # limit tf gpu memory to runtime allocation
   gpus = tf.config.experimental.list_physical_devices('GPU')
   if gpus:
@@ -42,9 +44,11 @@ if __name__ == "__main__":
     except RuntimeError as e:
       # Memory growth must be set before GPUs have been initialized
       print(e)
+
   print('Load word/sentence similarity embedding')
   # retrieve the USE encoder and counter fitting vector embeddings
   url = "https://tfhub.dev/google/universal-sentence-encoder/4"
+
   with tf.device("/cpu:0"):
     sent_encoder = hub.load(url)
   '''
@@ -66,8 +70,7 @@ if __name__ == "__main__":
   #val_ds = datasets.Dataset.from_dict(val_ds[:20])
   #test_ds = datasets.Dataset.from_dict(test_ds[:20])
   
-  ds_name = "imdb" #"yelp_polarity" 
-  use_phrase = False
+  ds_name = "yelp_polarity" #imdb
   _, test_ds = get_dataset(ds_name, split_rate=1.0)
   test_ds = datasets.Dataset.from_dict(test_ds[:1000])
   label_map = None
@@ -80,6 +83,9 @@ if __name__ == "__main__":
     
   #cwd/"saved_model"/"imdb_bert_base_uncased_finetuned_normal"
   if ds_name == "imdb":
+    #target_model_name = "imdb_bert_base_uncased_finetuned_training"
+    #target_model_path = cwd/"data"/"imdb"/"saved_model"/target_model_name
+    #target_model_name = "bert-base-uncased-imdb"
     target_model_name = "bert-base-uncased-imdb"
   elif ds_name == "mnli":
     target_model_name = "bert-base-uncased-MNLI"
@@ -108,7 +114,7 @@ if __name__ == "__main__":
   tokenizer = AutoTokenizer.from_pretrained(target_model_path)
   target_model = AutoModelForSequenceClassification.from_pretrained(target_model_path).to(device)
 
-  phrase_tokenizer = PhraseTokenizer(use_phrase=use_phrase)
+  phrase_tokenizer = PhraseTokenizer()
   mlm_model = AutoModelForMaskedLM.from_pretrained("bert-base-uncased").to(device)
 
   if use_cuda:
@@ -146,7 +152,7 @@ if __name__ == "__main__":
 
   # create the attacker
   params = {'k':15, 'beam_width':8, 'conf_thres':3.0, 'sent_semantic_thres':0.9, 'change_threshold':0.2}
-  attacker = Attacker(phrase_tokenizer, tokenizer, target_model, mlm_model, sent_encoder,  device, **params) #embeddings_cf,
+  attacker = Attacker(phrase_tokenizer, tokenizer, target_model, mlm_model, sent_encoder,  device, ['text'], **params) #embeddings_cf,
 
   output_entries = []
   adv_examples = []
@@ -156,11 +162,15 @@ if __name__ == "__main__":
   if not os.path.exists(dir_path):
     os.makedirs(dir_path)
 
-  suffix = f"{use_phrase}_{params['k']}_{params['beam_width']}_{params['sent_semantic_thres']}"
+  suffix = f"{params['k']}_{params['beam_width']}_{params['sent_semantic_thres']}"
   output_pth = f'{dir_path}/entry_{suffix}.json'
   eval_pth = f'{dir_path}/eval_{suffix}.json'
   adv_set_pth = f'{dir_path}/adv_{suffix}.json'
 
+  # clean output file
+  #f = open(output_pth, "w")
+  #f.writelines('')
+  #f.close()
   
   print('\nstart attack')
   # attack the target model
@@ -168,6 +178,10 @@ if __name__ == "__main__":
   with torch.no_grad():
     for i, entry in enumerate(progressbar):
       entry = attacker.attack(entry)
+      #print(f"success: {entry['success']}, change -words: {entry['word_changes']}, -phrases: {entry['phrase_changes']}")
+      #print('original text: ', entry['text'])
+      #print('adv text: ', entry['final_adv'])
+      #print('changes: ', entry['changes'])
 
       new_entry = { k: entry[k] for k in {'text', 'label',  'pred_success', 'success', 'changes', 'final_adv',  'word_changes', 'phrase_changes', 'word_num', 'phrase_num',   'query_num', 'phrase_len' } }
 

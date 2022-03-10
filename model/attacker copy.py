@@ -28,6 +28,7 @@ class Attacker:
                sentence_encoder,
                #word_embedding,
                device,
+               input_columns,
                k=8,
                beam_width=10,
                conf_thres=3.0,
@@ -41,6 +42,7 @@ class Attacker:
     self.sent_encoder     = sentence_encoder
     #self.word_embedding   = word_embedding
     self.device           = device
+    self.input_columns    = input_columns
 
     # select top k candidates
     self.k                = k
@@ -82,16 +84,18 @@ class Attacker:
     entry['query_num'] = 0
     entry['final_adv'] = None
 
+    entry_input = [entry[c] for c in self.input_columns]
 
     # 1. retrieve logits and label from the target model
-    encoded = self.tokenizer(entry['text'],
-                             padding=True,
+    encoded = self.tokenizer(*entry_input,
                              truncation=True,
+                             padding=True,
                              return_token_type_ids=False,
-                             return_tensors="pt")
-    input_ids = encoded['input_ids'].to(self.device)
-    attention_mask = encoded['attention_mask'].to(self.device)
-    orig_logits = self.target_model(input_ids, attention_mask).logits.squeeze()
+                             return_tensors="pt").to(self.device)
+    #input_ids = encoded['input_ids'].to(self.device)
+    #attention_mask = encoded['attention_mask'].to(self.device)
+    #orig_logits = self.target_model(input_ids, attention_mask).logits.squeeze()
+    orig_logits = self.target_model(**encoded).logits.squeeze()
     orig_probs  = torch.softmax(orig_logits, -1)
     orig_label = torch.argmax(orig_probs)
     max_prob = torch.max(orig_probs)
@@ -103,7 +107,7 @@ class Attacker:
     # filter out stop_words, digits & symbol combination
     filtered_indices = filter_unwanted_phrases(self.stop_words, entry['phrases'])
 
-    masked_phrases = get_unk_masked(entry['text'], entry['phrase_offsets'], filtered_indices)
+    masked_phrases = get_unk_masked(0, entry['phrase_offsets'], filtered_indices, *entry_input)
     importance_scores, _ = get_important_scores(masked_phrases,
                                                 self.tokenizer,
                                                 self.target_model,
@@ -136,32 +140,34 @@ class Attacker:
     word_changes = 0
     changes = []
 
-    text = entry['text']
     phrases = entry['phrases']
     phrase_offsets = entry['phrase_offsets']
     n_words_in_phrases = entry['n_words_in_phrases']
+
+    mask_text_idx = 0
 
     for changed,i in enumerate(sorted_indices_np):
       # break when attack is successful or changes exceed threshold
       if (changed+1)/max_change_threshold > self.change_threshold:
         break
 
-      phrase_masked_list = get_phrase_masked_list(text,
+      phrase_masked_list = get_phrase_masked_list(entry_input[mask_text_idx],
                                                   [phrase_offsets[i]],
-                                                  [n_words_in_phrases[i]])[0]
+                                                  [n_words_in_phrases[i]])[0] # [0] -> only get the most important mask position list
 
       attack_results = []
       for j, masked_text in enumerate(phrase_masked_list):
         # 3. get masked token candidates from MLM
 
-        encoded = self.tokenizer(masked_text,
+        masked_text = [masked_text if i == mask_text_idx else entry_input[i] for i in range(len(entry_input))]
+        encoded_dict = self.tokenizer(*masked_text,
                                  truncation=True,
                                  padding=True,
                                  return_token_type_ids=False,
-                                 return_tensors='pt')
+                                 return_tensors='pt').to(self.device)
 
-        input_ids = encoded['input_ids'].to(self.device)
-        attention_mask = encoded['attention_mask'].to(self.device)
+        input_ids = encoded_dict['input_ids']
+
         mask_token_index = torch.where(input_ids == self.tokenizer.mask_token_id)[-1]
         # skip if part or all of masks exceed max_length
         if len(mask_token_index) != j + 1:
@@ -177,15 +183,15 @@ class Attacker:
           #                       return_tensors='pt')
           #input_ids = encoded['input_ids'].to(self.device)
           #attention_mask = encoded['attention_mask'].to(self.device)
-          candidates_list = get_word_substitues(input_ids, attention_mask, mask_token_index, self.tokenizer, self.mlm_model, K=self.k, threshold=self.conf_thres)
+          candidates_list = get_word_substitues(encoded_dict, mask_token_index, self.tokenizer, self.mlm_model, K=self.k, threshold=self.conf_thres)
           entry['query_num'] += len(input_ids)
         elif len(phrase_masked_list) > 1:
-          candidates_list, qn = get_phrase_substitutes(input_ids, attention_mask, mask_token_index, self.stop_words, self.tokenizer, self.mlm_model, self.device, beam_width=self.beam_width, K=self.k)
+          candidates_list, qn = get_phrase_substitutes(encoded_dict, mask_token_index, self.stop_words, self.tokenizer, self.mlm_model, self.device, beam_width=self.beam_width, K=self.k)
           entry['query_num'] += qn
 
         mask_text = f" {' '.join([self.tokenizer.mask_token] * (j+1))} "
         for candidates in candidates_list:
-          perturbed_text = masked_text
+          perturbed_text = masked_text[mask_text_idx]
           candidate = ' '.join(candidates)
 
           if phrases[i] == candidate:
@@ -204,7 +210,7 @@ class Attacker:
           #if len(candidates) > 1:
           #seq_embeddings = self.sent_encoder([candidate, phrases[i]])
 
-          seq_embeddings = self.sent_encoder.encode([perturbed_text, entry['text']])
+          seq_embeddings = self.sent_encoder.encode([perturbed_text, entry_input[mask_text_idx]])
           #seq_embeddings = self.sent_encoder([perturbed_text, entry['text']])
           semantic_sim = np.dot(seq_embeddings[0], seq_embeddings[1]) / \
             (np.linalg.norm(seq_embeddings[0]) * np.linalg.norm(seq_embeddings[1]))
@@ -212,7 +218,7 @@ class Attacker:
           if semantic_sim < self.sent_semantic_thres:
             continue
 
-          importance_score, perturbed_label = get_important_scores([perturbed_text],
+          importance_score, perturbed_label = get_important_scores([[perturbed_text]],
                                                                    self.tokenizer,
                                                                    self.target_model,
                                                                    orig_label,

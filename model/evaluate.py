@@ -33,7 +33,13 @@ def evaluate(entries, num_pred_failures, eval_f_pth, params):
   word_change_rate = total_word_changes / total_words
   word_per_seq = total_word_changes / len(entries)
 
-  phrase_change_rate = total_phrase_changes / total_phrases
+  if total_phrases == 0:
+    phrase_change_rate = 0
+    mean_phrase_len = 0
+  else:
+    phrase_change_rate = total_phrase_changes / total_phrases
+    mean_phrase_len = total_phrase_len / total_phrases
+
   phrase_per_seq = total_phrase_changes / len(entries)
 
   original_acc = 1.0 - num_pred_failures / num_total_entry
@@ -43,7 +49,7 @@ def evaluate(entries, num_pred_failures, eval_f_pth, params):
 
   query_per_attack = query_num / len(entries)
 
-  mean_phrase_len = total_phrase_len / total_phrases
+  
 
   sent_sim = sent_sim / (num_total_entry - num_pred_failures)
 

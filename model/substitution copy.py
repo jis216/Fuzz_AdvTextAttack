@@ -17,30 +17,37 @@ def get_phrase_masked_list(text, sorted_phrase_offsets, sorted_n_words_in_phrase
       for each phrase in the list, 1 < len(list_of_masked_text) < n_words_in_phrase
   """
   phrase_masked_list = []
-  # this triple for loop would be super slow
-  # TODO: figure a way to optimize it
-  for i, (n, (start, end)) in enumerate(zip(sorted_n_words_in_phrase, sorted_phrase_offsets)):
+
+  for n, (start, end) in zip(sorted_n_words_in_phrase, sorted_phrase_offsets):
     phrase_masked_list.append([])
     for n_mask in range(1, n+1):
       # make sure there are spaces around it
       mask_text = f" {' '.join(['[MASK]'] * n_mask)} "
-      phrase_masked_list[i].append(text[:start] + mask_text + text[end:])
+      phrase_masked_list[-1].append(text[:start] + mask_text + text[end:])
 
   return phrase_masked_list
 
 
 # return units masked with UNK at each position in the sequence
-def get_unk_masked(text, phrase_offsets, filtered_indices):
-  masked_units = []
-  for i in filtered_indices:
-    start, end = phrase_offsets[i]
-    masked_units.append(text[:start] + '[UNK]' + text[end:])
-  # list of masked basic units
-  return masked_units
+def get_unk_masked(mask_idx, phrase_offsets, filtered_indices, *args):
+  mask_list_len = len(phrase_offsets)
+  masked_list = []
+
+  for i, cur_input_text in enumerate(args):
+    masked_list.append([])
+    
+    if i == mask_idx:
+       for i in filtered_indices:
+        start, end = phrase_offsets[i]
+        masked_list[-1].append(cur_input_text[:start] + '[UNK]' + cur_input_text[end:])
+    else:
+      masked_list[-1] = [cur_input_text] * mask_list_len
+    
+  return masked_list
 
 
 def get_important_scores(
-    masked_phrases,
+    masked_phrases_list,
     tokenizer,
     target_model,
     orig_label,
@@ -69,19 +76,21 @@ def get_important_scores(
     import_scores: a torch tensor with dim (len(masked_phrases),)
   """
 
-  encoded = tokenizer(masked_phrases,
+  encoded = tokenizer(*masked_phrases_list,
                       truncation=True,
-                      padding='max_length',
-                      max_length=max_length,
+                      padding=True,
                       return_token_type_ids=False,
-                      return_tensors="pt")
+                      return_tensors="pt").to(device)
 
-  inputs = torch.cat([encoded['input_ids'].unsqueeze(0), encoded['attention_mask'].unsqueeze(0)]).to(device)
-  inputs = inputs.permute(1, 0, 2).unsqueeze(2)
-  leave_1_logits = [target_model(*data).logits for data in inputs]
+  #inputs = torch.cat([encoded['input_ids'].unsqueeze(0), encoded['attention_mask'].unsqueeze(0)]).to(device)
+  #inputs = inputs.permute(1, 0, 2).unsqueeze(2)
+  #leave_1_logits = [target_model(*data).logits for data in inputs]
+
+  leave_1_logits = target_model(**encoded).logits
+  
 
   # turn into tensor
-  leave_1_logits = torch.cat(leave_1_logits, dim=0)
+  #leave_1_logits = torch.cat(leave_1_logits, dim=0)
   leave_1_probs = torch.softmax(leave_1_logits, dim=-1) # dim: (len(masked_phrases), num_of_classes)
   leave_1_labels = torch.argmax(leave_1_probs, dim=-1) # dim: len(masked_phrases)
 
@@ -143,14 +152,15 @@ def get_substitutes(top_k_ids, tokenizer, mlm_model, device):
 
   return candidates_list
 
-def get_phrase_substitutes(input_ids, attention_mask, mask_token_index, stop_words, tokenizer, mlm_model, device, beam_width=10, K=6):
+def get_phrase_substitutes(encoded, mask_token_index, stop_words, tokenizer, mlm_model, device, beam_width=10, K=6):
   # all substitutes  list of list of token-id (all candidates)
   c_loss = nn.CrossEntropyLoss(reduction='none')
 
   word_positions = len(mask_token_index)
   query_num = 0
     
-  masked_logits = mlm_model(input_ids, attention_mask).logits
+  masked_logits = mlm_model(**encoded).logits
+  input_ids = encoded['input_ids']
   query_num += len(input_ids)
   
   masked_logits = torch.index_select(masked_logits, 1, mask_token_index[0])
@@ -168,9 +178,16 @@ def get_phrase_substitutes(input_ids, attention_mask, mask_token_index, stop_wor
   for p in range(1, word_positions):
     new_inputs = input_ids.repeat(len(candidate_ids), 1)
     new_inputs[:, mask_token_index[:p]] = candidate_ids
-    new_attention_mask = attention_mask.repeat(len(candidate_ids), 1)
+
+    mlm_input = {}
+    for k in encoded.keys():
+      if k == 'input_ids':
+        mlm_input[k] = new_inputs
+      else:
+        mlm_input[k] = encoded[k]
+    #new_attention_mask = attention_mask.repeat(len(candidate_ids), 1)
     
-    masked_logits = mlm_model(new_inputs, new_attention_mask).logits
+    masked_logits = mlm_model(**mlm_input).logits
     masked_logits = torch.index_select(masked_logits, 1, mask_token_index[p])
     query_num += len(new_inputs)
     
@@ -202,8 +219,8 @@ def get_phrase_substitutes(input_ids, attention_mask, mask_token_index, stop_wor
     
   return candidates_list, query_num
 
-def get_word_substitues(input_ids, attention_mask, mask_token_index, tokenizer, mlm_model, K=8, threshold=3.0):
-  masked_logits = mlm_model(input_ids, attention_mask).logits
+def get_word_substitues(encoded, mask_token_index, tokenizer, mlm_model, K=8, threshold=3.0):
+  masked_logits = mlm_model(**encoded).logits
   masked_logits = torch.index_select(masked_logits, 1, mask_token_index)
   
   top_k_ids = torch.topk(masked_logits, K, dim=-1).indices[0]
