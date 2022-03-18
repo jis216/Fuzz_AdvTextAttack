@@ -50,8 +50,12 @@ The baseline experiments can all be exectued through running the following scrip
 To run our method, you can run the following command:
 
 ```bash
-python main.py
+python main.py --dataset <imdb or yelp_polarity> [--phrase_off]
 ```
+You can specify the dataset to run on, by default it will use yelp_polarity if no dataset option is specified. You can use the ``--phrase_off`` flag to turn off the phrase tokenization. Without this flag, by default it will use phrase tokenization.
+
+You can also use ``python main.py -h`` to get the argument specific usage info. 
+
 
 ## Online Demo
 You can run the Demo we've shown in the presentation in this [Colab Notebook](https://drive.google.com/file/d/1hW-PfcingOF1v57cjvX7ygZ-ZhhJoa9Z/view?usp=sharing).

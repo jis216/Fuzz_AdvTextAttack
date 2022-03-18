@@ -23,6 +23,7 @@ from model.evaluate import evaluate
 import time
 import json
 
+import argparse
 
 if __name__ == "__main__":
   start_time = time.time()
@@ -65,9 +66,15 @@ if __name__ == "__main__":
   #train_ds = datasets.Dataset.from_dict(train_ds[258:2258])
   #val_ds = datasets.Dataset.from_dict(val_ds[:20])
   #test_ds = datasets.Dataset.from_dict(test_ds[:20])
+
+
+  parser = argparse.ArgumentParser(description='Experiment Config')
+  parser.add_argument('--dataset', nargs='?', default='yelp_polarity', const='yelp_polarity', type=str, help="dataset to use: 'imdb' or 'yelp_polarity' (default)")
+  parser.add_argument('--phrase_off', action='store_false', help='flag to turn off phrase tokenization')
+  args = parser.parse_args()
   
-  ds_name = "imdb" #"yelp_polarity" 
-  use_phrase = False
+  ds_name = args.dataset
+  use_phrase = not args.phrase_off
   _, test_ds = get_dataset(ds_name, split_rate=1.0)
   test_ds = datasets.Dataset.from_dict(test_ds[:1000])
   label_map = None
@@ -77,7 +84,7 @@ if __name__ == "__main__":
 
   #embeddings_cf = np.load('./data/sim_mat/embeddings_cf.npy')
   #word_ids = np.load('./data/sim_mat/word_id.npy',allow_pickle='TRUE').item()
-    
+
   #cwd/"saved_model"/"imdb_bert_base_uncased_finetuned_normal"
   if ds_name == "imdb":
     target_model_name = "bert-base-uncased-imdb"
@@ -88,18 +95,6 @@ if __name__ == "__main__":
   target_model_path = f"textattack/{target_model_name}"
 
   use_cuda = torch.cuda.is_available()
-  if use_cuda:
-    t = torch.cuda.get_device_properties(0).total_memory *9.31323e-10 #GiB
-    r = torch.cuda.memory_reserved(0) *9.31323e-10 #GiB
-    a = torch.cuda.memory_allocated(0) *9.31323e-10  #GiB
-    f = (r-a) * 1024 # free inside cache [MiB]
-    
-    print('__CUDNN VERSION:', torch.backends.cudnn.version())
-    print('__Number CUDA Devices:', torch.cuda.device_count())
-    print('__CUDA Device Name:',torch.cuda.get_device_name(0))
-    print(f'Allocated/Reserved/Total Memory [GiB]: {a}/{r}/{t}')
-    print(f'Free Memory [MiB]: {f}')
-    
 
   print('Obtain model and tokenizer')
   sent_encoder = SentenceTransformer('sentence-transformers/bert-base-nli-stsb-mean-tokens')
@@ -131,18 +126,6 @@ if __name__ == "__main__":
   # tokenize the dataset to include words and phrases
   # test_ds = test_ds.map(lambda t: phrase_tokenizer.tokenize(t, label_map=label_map))
   test_ds = test_ds.map(phrase_tokenizer.tokenize)
-
-  if use_cuda:
-    t = torch.cuda.get_device_properties(0).total_memory *9.31323e-10 #GiB
-    r = torch.cuda.memory_reserved(0) *9.31323e-10 #GiB
-    a = torch.cuda.memory_allocated(0) *9.31323e-10  #GiB
-    f = (r-a) * 1024 # free inside cache [MiB]
-    
-    print('__CUDNN VERSION:', torch.backends.cudnn.version())
-    print('__Number CUDA Devices:', torch.cuda.device_count())
-    print('__CUDA Device Name:',torch.cuda.get_device_name(0))
-    print(f'Allocated/Reserved/Total Memory [GiB]: {a}/{r}/{t}')
-    print(f'Free Memory [MiB]: {f}')
 
   # create the attacker
   params = {'k':15, 'beam_width':8, 'conf_thres':3.0, 'sent_semantic_thres':0.9, 'change_threshold':0.2}
